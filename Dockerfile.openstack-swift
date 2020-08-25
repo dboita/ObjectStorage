@@ -1,0 +1,133 @@
+FROM centos
+# RUN systemctl disable firewalld
+# RUN yum install -y https://rdoproject.org/repos/rdo-release.rpm
+# RUN openssl rand -hex 10
+RUN yum install -y \
+    https://rdoproject.org/repos/rdo-release.rpm \
+    centos-release-openstack-ocata
+RUN yum install -y \
+    python-openstackclient \
+    openstack-selinux  \
+    python2-PyMySQL \
+    openstack-keystone \
+    mod_wsgi \ 
+    openstack-dashboard \
+    targetcli \
+    python-keystone \
+    openstack-swift-proxy \
+    python-swiftclient \
+    python-keystoneclient \ 
+    python-keystonemiddleware \
+    xfsprogs \
+    git
+RUN yum upgrade -y
+# RUN yum install -y pip
+# RUN pip install 
+
+# RUN openssl rand -hex 10
+RUN yum install -y \
+    curl \
+    gcc \
+    memcached \
+    rsync \ 
+    sqlite \
+    git-core
+RUN yum install -y \
+    libffi-devel \
+    xinetd \
+    liberasurecode-devel
+RUN yum install -y \
+    openssl-devel \ 
+    python-setuptools
+RUN yum install -y \
+    python-coverage \
+    python-devel \
+    python-nose
+RUN yum install -y \
+    pyxattr \
+    python-eventlet
+RUN yum install -y \
+    python-greenlet \
+    python-paste-deploy
+RUN yum install -y \
+    python-netifaces \
+    python-pip python-dns
+RUN yum install -y \
+    python-mock
+
+ADD config/openstack-swift/selinux /etc/selinux/config
+ADD config/openstack-swift/openstack.cnf /etc/my.cnf.d/openstack.cnf
+
+# SSH installation and configuration
+RUN yum install -y openssh-server
+RUN echo 'root:Password123' | chpasswd && \
+    rm -f /etc/ssh/ssh_host_dsa_key /etc/ssh/ssh_host_rsa_key && \
+    ssh-keygen -q -N "" -t dsa -f /etc/ssh/ssh_host_dsa_key && \
+    ssh-keygen -q -N "" -t rsa -f /etc/ssh/ssh_host_rsa_key && \
+    sed -i "s/#UsePrivilegeSeparation.*/UsePrivilegeSeparation no/g" /etc/ssh/sshd_config && \
+    sed -i "s/UsePAM.*/UsePAM no/g" /etc/ssh/sshd_config
+EXPOSE 8022
+
+# packets required for swift3.git
+RUN yum install -y libxml2-devel libxslt-devel
+# get config files for Swift
+RUN git clone https://github.com/openstack/python-swiftclient.git /root/python-swiftclient
+RUN git clone https://github.com/openstack/swift.git /root/swift
+RUN cd /root/python-swiftclient; python setup.py develop;
+RUN cd /root/swift; pip install -r requirements.txt; python setup.py develop;
+RUN git clone https://github.com/stackforge/swift3.git /root/swift3
+RUN cd /root/swift3; python setup.py develop;
+
+RUN yum install -y openstack-swift-account openstack-swift-container openstack-swift-object
+
+# configure logs for swift
+RUN yum -y install -y rsyslog
+ADD config/openstack-swift/rsyslog.conf /etc/rsyslog.conf
+ADD config/openstack-swift/listen.conf /etc/rsyslog.d/listen.conf
+
+# install debug tools
+RUN yum install -y \
+    net-tools \
+    nc
+
+# install and configure Apache/httpd for keystone
+RUN yum install -y httpd
+EXPOSE 8080 6200 6201 6202
+#EXPOSE 80 5000 35357
+ADD config/keystone/httpd.conf /etc/httpd/conf/httpd.conf
+RUN ln -sf /usr/share/keystone/wsgi-keystone.conf /etc/httpd/conf.d/wsgi-keystone.conf
+
+# adding configuration files for keystone
+ADD config/keystone/keystone.conf /etc/keystone/keystone.conf
+ADD config/keystone/keystone-paste.ini /etc/keystone/keystone-paste.ini
+
+# adding configuration file for Openstack-Dashboard Horizon (needed port 80 to be opened)
+ADD config/keystone/local_settings /etc/openstack-dashboard/local_settings
+EXPOSE 80
+
+# adding configuration files for Swift
+#curl -o /etc/swift/account-server.conf https://git.openstack.org/cgit/openstack/swift/plain/etc/account-server.conf-sample?h=stable/ocata
+#curl -o /etc/swift/container-server.conf https://git.openstack.org/cgit/openstack/swift/plain/etc/container-server.conf-sample?h=stable/ocata
+#curl -o /etc/swift/object-server.conf https://git.openstack.org/cgit/openstack/swift/plain/etc/object-server.conf-sample?h=stable/ocata
+#curl -o /etc/swift/proxy-server.conf https://git.openstack.org/cgit/openstack/swift/plain/etc/proxy-server.conf-sample?h=stable/ocata
+ADD config/openstack-swift/proxy-server.conf /etc/swift/proxy-server.conf
+ADD config/openstack-swift/account-server.conf /etc/swift/account-server.conf
+ADD config/openstack-swift/container-server.conf /etc/swift/container-server.conf
+ADD config/openstack-swift/object-server.conf /etc/swift/object-server.conf
+ADD config/openstack-swift/swift.conf /etc/swift/swift.conf
+
+# Add admin-openrc commands 
+ADD config/keystone/admin-openrc /root/admin-openrc
+
+# ADD rsync config file
+ADD config/openstack-swift/rsyncd.conf /etc/rsyncd.conf
+EXPOSE 873
+
+# ADD script file for checking and restating the processes for Swift,rsync,httpd
+ADD config/openstack-swift/check_restart_porcesses.sh /tmp/check_restart_porcesses.sh
+
+# configuration script for the keystone service
+ADD config/openstack-swift/start.sh /tmp/start.sh
+
+# Define configuration for Keystone & Openstack
+ENTRYPOINT ["/tmp/start.sh"]
